@@ -1,15 +1,91 @@
 "use client";
 
-import { UserButton, SignedIn, SignedOut, SignInButton } from "@clerk/nextjs";
+import {
+  SignedIn,
+  SignedOut,
+  SignInButton,
+  useClerk,
+  useUser,
+} from "@clerk/nextjs";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { useEffect, Suspense } from "react";
+import { useEffect, Suspense, useState, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import ChatArea from "@/components/ChatArea";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Id } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { LogOut } from "lucide-react";
+
+/** Custom avatar + sign-out button that sets offline BEFORE Clerk signs out */
+function UserMenu() {
+  const { user } = useUser();
+  const { signOut } = useClerk();
+  const updateStatus = useMutation(api.users.updateStatus);
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const handleSignOut = async () => {
+    // Mark offline FIRST, then sign out — this ensures the Convex mutation
+    // completes before Clerk tears down the auth session
+    try {
+      await updateStatus({ isOnline: false });
+    } finally {
+      await signOut({ redirectUrl: "/" });
+    }
+  };
+
+  return (
+    <div className="relative" ref={menuRef}>
+      <button
+        onClick={() => setOpen((p) => !p)}
+        className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        aria-label="User menu"
+      >
+        <Avatar className="h-8 w-8">
+          <AvatarImage src={user?.imageUrl} />
+          <AvatarFallback className="text-xs font-medium bg-blue-100 text-blue-700">
+            {user?.firstName?.charAt(0) ?? "U"}
+          </AvatarFallback>
+        </Avatar>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 mt-2 w-52 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl shadow-lg z-50 overflow-hidden">
+          <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800">
+            <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">
+              {user?.fullName}
+            </p>
+            <p className="text-xs text-zinc-500 truncate mt-0.5">
+              {user?.primaryEmailAddress?.emailAddress}
+            </p>
+          </div>
+          <button
+            onClick={handleSignOut}
+            className="w-full flex items-center gap-2.5 px-4 py-3 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+          >
+            <LogOut className="h-4 w-4" />
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ChatApp() {
   const storeUser = useMutation(api.users.store);
@@ -22,29 +98,24 @@ function ChatApp() {
     storeUser();
     updateStatus({ isOnline: true });
 
-    // Handle tab visibility changes (more reliable than beforeunload)
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
         updateStatus({ isOnline: false });
-      } else if (document.visibilityState === "visible") {
+      } else {
         updateStatus({ isOnline: true });
       }
     };
 
-    // Handle window/tab close
-    const handleWindowClose = () => {
-      updateStatus({ isOnline: false });
-    };
+    const handleOffline = () => updateStatus({ isOnline: false });
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("beforeunload", handleWindowClose);
-    window.addEventListener("pagehide", handleWindowClose);
+    window.addEventListener("beforeunload", handleOffline);
+    window.addEventListener("pagehide", handleOffline);
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("beforeunload", handleWindowClose);
-      window.removeEventListener("pagehide", handleWindowClose);
-      updateStatus({ isOnline: false });
+      window.removeEventListener("beforeunload", handleOffline);
+      window.removeEventListener("pagehide", handleOffline);
     };
   }, [storeUser, updateStatus]);
 
@@ -53,7 +124,6 @@ function ChatApp() {
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 shrink-0 z-20">
         <div className="flex items-center gap-3">
-          {/* Back button on mobile when in a chat */}
           {currentChatId && (
             <Button
               variant="ghost"
@@ -82,7 +152,7 @@ function ChatApp() {
         </div>
         <div className="flex items-center gap-3">
           <ThemeToggle />
-          <UserButton afterSignOutUrl="/" />
+          <UserMenu />
         </div>
       </header>
 
