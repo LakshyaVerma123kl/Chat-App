@@ -12,7 +12,7 @@ export const markRead = mutation({
       .withIndex("by_conversation_and_user", (q) =>
         q
           .eq("conversationId", args.conversationId)
-          .eq("userId", identity.subject),
+          .eq("userId", identity.subject)
       )
       .unique();
 
@@ -41,7 +41,7 @@ export const getSidebarData = query({
 
     const conversations = await ctx.db.query("conversations").collect();
     const myConversations = conversations.filter((c) =>
-      c.participantIds.includes(currentUserId),
+      c.participantIds.includes(currentUserId)
     );
 
     const myReceipts = await ctx.db
@@ -51,9 +51,10 @@ export const getSidebarData = query({
 
     const sidebarItems = [];
 
+    // Direct message users
     for (const user of otherUsers) {
       const conversation = myConversations.find(
-        (c) => !c.isGroup && c.participantIds.includes(user.clerkId),
+        (c) => !c.isGroup && c.participantIds.includes(user.clerkId)
       );
 
       let lastMessage = null;
@@ -63,7 +64,7 @@ export const getSidebarData = query({
         const messages = await ctx.db
           .query("messages")
           .withIndex("by_conversationId", (q) =>
-            q.eq("conversationId", conversation._id),
+            q.eq("conversationId", conversation._id)
           )
           .order("desc")
           .collect();
@@ -71,29 +72,41 @@ export const getSidebarData = query({
         if (messages.length > 0) {
           lastMessage = messages[0];
           const receipt = myReceipts.find(
-            (r) => r.conversationId === conversation._id,
+            (r) => r.conversationId === conversation._id
           );
           const lastReadTime = receipt ? receipt.lastReadTime : 0;
           unreadCount = messages.filter(
             (m) =>
-              m.senderId !== currentUserId && m._creationTime > lastReadTime,
+              m.senderId !== currentUserId &&
+              m._creationTime > lastReadTime &&
+              !m.isDeleted
           ).length;
         }
       }
 
       sidebarItems.push({
         id: user._id,
-        isGroup: false,
-        conversationId: conversation?._id,
+        isGroup: false as const,
+        conversationId: conversation?._id as string | undefined,
         otherUserId: user.clerkId,
         name: user.name,
         imageUrl: user.imageUrl,
         isOnline: user.isOnline,
-        lastMessage,
+        lastMessage: lastMessage
+          ? {
+              _creationTime: lastMessage._creationTime,
+              text: lastMessage.isDeleted
+                ? "Message deleted"
+                : lastMessage.text,
+              isDeleted: lastMessage.isDeleted ?? false,
+            }
+          : null,
         unreadCount,
+        memberCount: undefined as number | undefined,
       });
     }
 
+    // Group conversations
     const groupConversations = myConversations.filter((c) => c.isGroup);
     for (const group of groupConversations) {
       let lastMessage = null;
@@ -102,7 +115,7 @@ export const getSidebarData = query({
       const messages = await ctx.db
         .query("messages")
         .withIndex("by_conversationId", (q) =>
-          q.eq("conversationId", group._id),
+          q.eq("conversationId", group._id)
         )
         .order("desc")
         .collect();
@@ -112,24 +125,39 @@ export const getSidebarData = query({
         const receipt = myReceipts.find((r) => r.conversationId === group._id);
         const lastReadTime = receipt ? receipt.lastReadTime : 0;
         unreadCount = messages.filter(
-          (m) => m.senderId !== currentUserId && m._creationTime > lastReadTime,
+          (m) =>
+            m.senderId !== currentUserId &&
+            m._creationTime > lastReadTime &&
+            !m.isDeleted
         ).length;
       }
 
       sidebarItems.push({
         id: group._id,
-        isGroup: true,
-        conversationId: group._id,
-        name: group.groupName || "Unnamed Group",
-        memberCount: group.participantIds.length,
-        lastMessage,
+        isGroup: true as const,
+        conversationId: group._id as string,
+        name: group.groupName ?? "Unnamed Group",
+        imageUrl: undefined as string | undefined,
+        isOnline: undefined as boolean | undefined,
+        otherUserId: undefined as string | undefined,
+        lastMessage: lastMessage
+          ? {
+              _creationTime: lastMessage._creationTime,
+              text: lastMessage.isDeleted
+                ? "Message deleted"
+                : lastMessage.text,
+              isDeleted: lastMessage.isDeleted ?? false,
+            }
+          : null,
         unreadCount,
+        memberCount: group.participantIds.length,
       });
     }
 
+    // Sort: conversations with messages first (by recency), then users without conversations
     return sidebarItems.sort((a, b) => {
-      const timeA = a.lastMessage?._creationTime || 0;
-      const timeB = b.lastMessage?._creationTime || 0;
+      const timeA = a.lastMessage?._creationTime ?? 0;
+      const timeB = b.lastMessage?._creationTime ?? 0;
       return timeB - timeA;
     });
   },

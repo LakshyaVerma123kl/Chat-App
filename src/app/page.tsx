@@ -7,7 +7,7 @@ import { useEffect, Suspense } from "react";
 import Sidebar from "@/components/Sidebar";
 import ChatArea from "@/components/ChatArea";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Id } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 
@@ -15,51 +15,105 @@ function ChatApp() {
   const storeUser = useMutation(api.users.store);
   const updateStatus = useMutation(api.users.updateStatus);
   const searchParams = useSearchParams();
+  const router = useRouter();
   const currentChatId = searchParams.get("c") as Id<"conversations"> | null;
 
   useEffect(() => {
     storeUser();
     updateStatus({ isOnline: true });
 
+    // Handle tab visibility changes (more reliable than beforeunload)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        updateStatus({ isOnline: false });
+      } else if (document.visibilityState === "visible") {
+        updateStatus({ isOnline: true });
+      }
+    };
+
+    // Handle window/tab close
     const handleWindowClose = () => {
       updateStatus({ isOnline: false });
     };
 
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("beforeunload", handleWindowClose);
+    window.addEventListener("pagehide", handleWindowClose);
 
     return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("beforeunload", handleWindowClose);
+      window.removeEventListener("pagehide", handleWindowClose);
       updateStatus({ isOnline: false });
     };
   }, [storeUser, updateStatus]);
 
   return (
-    <div className="flex flex-col h-screen bg-zinc-50 dark:bg-zinc-950">
-      <header className="flex items-center justify-between p-4 bg-white dark:bg-zinc-900 border-b shrink-0 z-20">
-        <h1 className="text-xl font-bold">Tars Chat</h1>
-        <div className="flex items-center gap-4">
+    <div className="flex flex-col h-screen bg-zinc-50 dark:bg-zinc-950 overflow-hidden">
+      {/* Header */}
+      <header className="flex items-center justify-between px-4 py-3 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 shrink-0 z-20">
+        <div className="flex items-center gap-3">
+          {/* Back button on mobile when in a chat */}
+          {currentChatId && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="md:hidden -ml-1 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+              onClick={() => router.push("/")}
+            >
+              <svg
+                className="h-5 w-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 19l-7-7 7-7"
+                />
+              </svg>
+            </Button>
+          )}
+          <h1 className="text-xl font-bold text-zinc-900 dark:text-zinc-100">
+            Tars Chat
+          </h1>
+        </div>
+        <div className="flex items-center gap-3">
           <ThemeToggle />
           <UserButton afterSignOutUrl="/" />
         </div>
       </header>
 
-      <main className="flex-1 flex overflow-hidden relative">
+      {/* Main content */}
+      <main className="flex-1 flex overflow-hidden">
+        {/* Sidebar: always visible on desktop, only shown on mobile when no chat is selected */}
         <div
-          className={`w-full md:w-80 md:flex flex-col h-full shrink-0 border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 z-10 
-          ${currentChatId ? "hidden" : "flex"}`}
+          className={`
+            w-full md:w-80 shrink-0
+            border-r border-zinc-200 dark:border-zinc-800
+            bg-white dark:bg-zinc-900
+            flex flex-col h-full
+            ${currentChatId ? "hidden md:flex" : "flex"}
+          `}
         >
           <Sidebar />
         </div>
 
+        {/* Chat area: always visible on desktop, only shown on mobile when a chat is selected */}
         <div
-          className={`flex-1 flex-col h-full bg-zinc-50 dark:bg-zinc-950
-          ${currentChatId ? "flex" : "hidden md:flex"}`}
+          className={`
+            flex-1 flex flex-col h-full
+            bg-zinc-50 dark:bg-zinc-950
+            ${currentChatId ? "flex" : "hidden md:flex"}
+          `}
         >
           {currentChatId ? (
             <ChatArea conversationId={currentChatId} />
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 bg-zinc-50/50 dark:bg-zinc-950/50">
-              <div className="bg-white dark:bg-zinc-900 p-8 rounded-full mb-4 shadow-sm border border-zinc-200 dark:border-zinc-800">
+            <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 p-6">
+              <div className="bg-white dark:bg-zinc-900 p-8 rounded-full mb-5 shadow-sm border border-zinc-200 dark:border-zinc-800">
                 <svg
                   className="w-12 h-12 text-zinc-400"
                   fill="none"
@@ -74,10 +128,13 @@ function ChatApp() {
                   />
                 </svg>
               </div>
-              <h3 className="text-lg font-medium text-zinc-900 dark:text-zinc-100 mb-1">
+              <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
                 Your Messages
               </h3>
-              <p>Select a user from the sidebar to start a conversation.</p>
+              <p className="text-sm text-center max-w-xs">
+                Select a conversation from the sidebar or search for a user to
+                start chatting.
+              </p>
             </div>
           )}
         </div>
@@ -105,16 +162,13 @@ function LandingPage() {
             />
           </svg>
         </div>
-
         <h1 className="text-3xl md:text-4xl font-bold text-zinc-900 dark:text-white mb-4">
           Welcome to Tars Chat
         </h1>
-
         <p className="text-zinc-500 dark:text-zinc-400 mb-8 text-lg">
           A real-time messaging application built for seamless communication.
           Sign in to start connecting.
         </p>
-
         <SignInButton mode="modal">
           <Button
             size="lg"
@@ -134,15 +188,14 @@ export default function Home() {
       <SignedIn>
         <Suspense
           fallback={
-            <div className="flex h-screen items-center justify-center">
-              Loading...
+            <div className="flex h-screen items-center justify-center bg-zinc-50 dark:bg-zinc-950">
+              <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
             </div>
           }
         >
           <ChatApp />
         </Suspense>
       </SignedIn>
-
       <SignedOut>
         <LandingPage />
       </SignedOut>
